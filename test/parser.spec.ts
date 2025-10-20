@@ -29,13 +29,21 @@ import { expectEqualIgnoreFormatting } from "./util";
 
 describe("parser unit tests", () => {
   describe("parseObject() - when parsing an object schema", () => {
-    it("returns Type.Unknown() it the object has no properties", () => {
+    it("returns Type.Unknown() if the object has no properties", () => {
       const dummySchema: ObjectSchema = {
         type: "object",
         properties: undefined,
       };
       const result = parseObject(dummySchema);
       expect(result).toContain("Type.Unknown");
+    });
+    it("returns Type.Object({}) if the object has empty properties", () => {
+      const dummySchema: ObjectSchema = {
+        type: "object",
+        properties: {},
+      };
+      const result = parseObject(dummySchema);
+      expect(result).toContain("Type.Object({})");
     });
     describe("returns Type.Record(...) if the object has no defined properties but has additionalProperties", () => {
       const dummySchema: ObjectSchema = {
@@ -47,6 +55,33 @@ describe("parser unit tests", () => {
       const result = parseObject(dummySchema);
       expect(result).toContain("Type.Record(Type.String(), Type.String())");
     });
+    describe("returns Type.Record(...) if the object has empty properties but has additionalProperties", () => {
+      const dummySchema: ObjectSchema = {
+        type: "object",
+        properties: {},
+        additionalProperties: { type: "string" },
+      };
+
+      const result = parseObject(dummySchema);
+      expect(result).toContain("Type.Record(Type.String(), Type.String())");
+    });
+    describe("returns Union of Object and Record if the object has properties and additionalProperties", () => {
+      const dummySchema: ObjectSchema = {
+        type: "object",
+        properties: {
+          a: {
+            type: "number",
+          },
+        },
+        additionalProperties: { type: "string" },
+      };
+
+      const result = parseObject(dummySchema);
+      expect(result).toContain(
+        'Type.Union([Type.Object({"a": Type.Optional(Type.Number())}), Type.Record(Type.String(), Type.String())])'
+      );
+    });
+
     it("creates code with attributes for each property", async () => {
       const dummySchema: ObjectSchema = {
         type: "object",

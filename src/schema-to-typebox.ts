@@ -171,13 +171,11 @@ export const parseObject = (schema: ObjectSchema) => {
   const schemaOptions = parseSchemaOptions(schema);
   const properties = schema.properties;
   const requiredProperties = schema.required;
+  const additionalProperties = schema.additionalProperties;
   if (properties === undefined) {
     // If no properties are defined but additionalProperties exists, generate Type.Record
-    if (
-      schema.additionalProperties &&
-      typeof schema.additionalProperties === "object"
-    ) {
-      const valueType = collect(schema.additionalProperties);
+    if (additionalProperties && typeof additionalProperties === "object") {
+      const valueType = collect(additionalProperties);
       return `Type.Record(Type.String(), ${valueType})`;
     }
     return `Type.Unknown()`;
@@ -189,6 +187,16 @@ export const parseObject = (schema: ObjectSchema) => {
   // [here](https://github.com/xddq/schema2typebox/discussions/35). Since we run
   // prettier as "postprocessor" anyway we will also ensure to still have a sane
   // output without any unnecessarily quotes attributes.
+
+  if (attributes.length === 0) {
+    if (additionalProperties !== undefined) {
+      const valueType = collect(additionalProperties);
+      return `Type.Record(Type.String(), ${valueType})`;
+    }
+    return schemaOptions === undefined
+      ? `Type.Object({})`
+      : `Type.Object({}, ${schemaOptions})`;
+  }
   const code = attributes
     .map(([propertyName, schema]) => {
       return `"${propertyName}": ${addOptionalModifier(
@@ -198,6 +206,12 @@ export const parseObject = (schema: ObjectSchema) => {
       )}`;
     })
     .join(",\n");
+
+  if (additionalProperties) {
+    const valueType = collect(additionalProperties);
+    const additionalType = `Type.Record(Type.String(), ${valueType})`;
+    return `Type.Union([Type.Object({${code}}), ${additionalType}])`;
+  }
   return schemaOptions === undefined
     ? `Type.Object({${code}})`
     : `Type.Object({${code}}, ${schemaOptions})`;

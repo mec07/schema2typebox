@@ -1,3 +1,7 @@
+# 1.7.8
+
+- Support empty `properties` field like `{"type": "object", "properties": {}}`, suport additionalProperties when other properties are defined [src](https://github.com/xddq/schema2typebox/pull/59)
+
 # 1.7.7
 
 - support `Type.Record(Type.String(), <T>)` generation from empty objects using additionalProperties [src](https://github.com/xddq/schema2typebox/pull/58)
