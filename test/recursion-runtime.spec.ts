@@ -10,15 +10,15 @@ const Leaf = Type.Object({
   type: Type.Literal("leaf"),
   value: Type.Number(),
 });
-const Condition = Type.Recursive((This) =>
-  Type.Union([
+const Condition = Type.Recursive((This) => {
+  return Type.Union([
     Leaf,
     Type.Object({
       type: Type.Literal("and"),
       conditions: Type.Array(This),
     }),
-  ])
-);
+  ]);
+});
 
 describe("recursive generated shape validates at runtime", () => {
   it("accepts a deeply nested condition tree", () => {

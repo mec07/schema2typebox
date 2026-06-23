@@ -9,6 +9,7 @@ import {
   JSONSchema7Type,
   JSONSchema7TypeName,
 } from "json-schema";
+import { RecursionTargets, findRecursionTargets } from "./recursion";
 import {
   AllOfSchema,
   AnyOfSchema,
@@ -32,19 +33,27 @@ import {
   isSchemaWithMultipleTypes,
   isUnknownSchema,
 } from "./schema-matchers";
-import { findRecursionTargets, RecursionTargets } from "./recursion";
 
 type Code = string;
 
 type RecursionState = {
+  // object -> placeholder name ("This", "This1", ...) for each recursion target
   targets: RecursionTargets;
+  // recursion targets whose Type.Recursive(...) is currently open on the path
   active: Set<object>;
+  // ordered log of every back-edge emitted; parseOneOf slices it to detect
+  // back-edges produced within its own members and pick OneOf vs Type.Union
   backEdges: object[];
 };
 
-// Module-level generation state. Set once per top-level schema2typebox() call
-// and reset in a finally block. When undefined (e.g. when parse* functions are
-// called directly in unit tests), generation behaves exactly as before.
+// Module-level generation state, used as an implicit parameter threaded through
+// the parse* call tree (collect/parseOneOf read it) instead of widening every
+// parser signature. This is safe only because generation is synchronous: the
+// state is assigned once per top-level schema2typebox() call and cleared in a
+// finally before returning, with no await in between, so calls cannot interleave
+// on it. It is left undefined for non-recursive schemas (and whenever parse*
+// functions are called directly in unit tests), in which case collect/parseOneOf
+// behave exactly as they did before recursion support.
 let recursionState: RecursionState | undefined;
 
 /** Generates TypeBox code from a given JSON schema */
@@ -66,11 +75,13 @@ export const schema2typebox = async (jsonSchema: string) => {
 
   // Detect self-referential nodes so we can emit Type.Recursive(...) for them
   // instead of infinitely inlining the dereferenced circular graph. See #62.
-  recursionState = {
-    targets: findRecursionTargets(dereferencedSchema),
-    active: new Set<object>(),
-    backEdges: [],
-  };
+  // Only set up recursion state when the schema actually contains a cycle, so
+  // non-recursive generation stays a true no-op identical to before.
+  const recursionTargets = findRecursionTargets(dereferencedSchema);
+  recursionState =
+    recursionTargets.size > 0
+      ? { targets: recursionTargets, active: new Set<object>(), backEdges: [] }
+      : undefined;
   let typeBoxType: Code;
   try {
     typeBoxType = collect(dereferencedSchema);
@@ -97,11 +108,7 @@ export const ${exportedName} = ${typeBoxType}`;
  * @throws Error if an unexpected schema (one with no matching parser) was given
  */
 export const collect = (schema: JSONSchema7Definition): Code => {
-  if (
-    recursionState !== undefined &&
-    typeof schema === "object" &&
-    schema !== null
-  ) {
+  if (recursionState !== undefined && typeof schema === "object") {
     // Back-edge: this recursion target is already open on the current path.
     // Emit its placeholder instead of recursing forever, and log it so the
     // enclosing parseOneOf can decide between OneOf and Type.Union.
@@ -373,21 +380,17 @@ export const parseOneOf = (schema: OneOfSchema): Code => {
   // helper validates each subschema in isolation and cannot dereference such a
   // ref (throws ValueCheckDereferenceError at runtime), so emit native
   // Type.Union, which resolves recursive refs correctly. See issue #62.
-  if (recursionState !== undefined && enclosingActive !== undefined) {
-    const newBackEdges = recursionState.backEdges.slice(backEdgeStart);
-    const hasFreeBackEdge = newBackEdges.some((target) =>
-      enclosingActive.has(target)
-    );
-    if (hasFreeBackEdge) {
-      return schemaOptions === undefined
-        ? `Type.Union([${code}])`
-        : `Type.Union([${code}], ${schemaOptions})`;
-    }
-  }
+  const hasFreeBackEdge =
+    recursionState !== undefined &&
+    enclosingActive !== undefined &&
+    recursionState.backEdges.slice(backEdgeStart).some((target) => {
+      return enclosingActive.has(target);
+    });
+  const wrapper = hasFreeBackEdge ? "Type.Union" : "OneOf";
 
   return schemaOptions === undefined
-    ? `OneOf([${code}])`
-    : `OneOf([${code}], ${schemaOptions})`;
+    ? `${wrapper}([${code}])`
+    : `${wrapper}([${code}], ${schemaOptions})`;
 };
 
 export const parseNot = (schema: NotSchema): Code => {

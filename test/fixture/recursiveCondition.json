@@ -18,10 +18,7 @@
           "type": "array",
           "minItems": 2,
           "items": {
-            "oneOf": [
-              { "$ref": "#/$defs/Leaf" },
-              { "$ref": "#/$defs/AndNode" }
-            ]
+            "oneOf": [{ "$ref": "#/$defs/Leaf" }, { "$ref": "#/$defs/AndNode" }]
           }
         }
       },

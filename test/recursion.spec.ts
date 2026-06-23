@@ -32,12 +32,17 @@ describe("findRecursionTargets()", () => {
 
   it("marks the node pointed back to (not the root) for nested recursion", () => {
     // root -> oneOf -> andNode -> conditions(array) -> items === andNode
-    const andNode = { type: "object", properties: {} } as Record<string, unknown>;
+    const andNode = { type: "object", properties: {} } as Record<
+      string,
+      unknown
+    >;
     (andNode.properties as Record<string, unknown>).conditions = {
       type: "array",
       items: andNode,
     };
-    const root = { oneOf: [{ type: "number" }, andNode] } as unknown as JSONSchema7;
+    const root = {
+      oneOf: [{ type: "number" }, andNode],
+    } as unknown as JSONSchema7;
     const targets = findRecursionTargets(root);
     expect(targets.has(andNode as object)).toBe(true);
     expect(targets.has(root as object)).toBe(false);

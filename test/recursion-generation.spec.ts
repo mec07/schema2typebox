@@ -3,11 +3,12 @@ import { readFileSync } from "node:fs";
 import { schema2typebox } from "../src/index";
 import { buildOsIndependentPath } from "./util";
 
-const readFixture = (relPath: string): string =>
-  readFileSync(
+const readFixture = (relPath: string): string => {
+  return readFileSync(
     buildOsIndependentPath([process.cwd(), ...relPath.split("/")]),
     "utf-8"
   );
+};
 
 describe("recursive schema support (issue #62)", () => {
   const input = readFixture("test/fixture/recursiveCondition.json");
