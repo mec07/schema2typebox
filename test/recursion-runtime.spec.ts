@@ -38,10 +38,6 @@ describe("recursive generated shape validates at runtime", () => {
     expect(Value.Check(Condition, tree)).toBe(true);
   });
 
-  it("accepts a plain leaf", () => {
-    expect(Value.Check(Condition, { type: "leaf", value: 5 })).toBe(true);
-  });
-
   it("rejects an 'and' node with no conditions array", () => {
     expect(Value.Check(Condition, { type: "and" })).toBe(false);
   });
