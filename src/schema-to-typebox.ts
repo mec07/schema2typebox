@@ -380,7 +380,12 @@ const parseSchemaOptions = (schema: JSONSchema7): Code | undefined => {
       key !== "properties" &&
       key !== "required" &&
       key !== "const" &&
-      key !== "enum"
+      key !== "enum" &&
+      // Definition containers are not validation options. After dereference
+      // they are redundant and, for recursive schemas, hold a circular graph
+      // that would explode JSON.stringify below. See issue #62.
+      key !== "$defs" &&
+      key !== "definitions"
     );
   });
   if (properties.length === 0) {
