@@ -32,8 +32,20 @@ import {
   isSchemaWithMultipleTypes,
   isUnknownSchema,
 } from "./schema-matchers";
+import { findRecursionTargets, RecursionTargets } from "./recursion";
 
 type Code = string;
+
+type RecursionState = {
+  targets: RecursionTargets;
+  active: Set<object>;
+  backEdges: object[];
+};
+
+// Module-level generation state. Set once per top-level schema2typebox() call
+// and reset in a finally block. When undefined (e.g. when parse* functions are
+// called directly in unit tests), generation behaves exactly as before.
+let recursionState: RecursionState | undefined;
 
 /** Generates TypeBox code from a given JSON schema */
 export const schema2typebox = async (jsonSchema: string) => {
@@ -51,7 +63,21 @@ export const schema2typebox = async (jsonSchema: string) => {
   ) {
     dereferencedSchema.$id = exportedName;
   }
-  const typeBoxType = collect(dereferencedSchema);
+
+  // Detect self-referential nodes so we can emit Type.Recursive(...) for them
+  // instead of infinitely inlining the dereferenced circular graph. See #62.
+  recursionState = {
+    targets: findRecursionTargets(dereferencedSchema),
+    active: new Set<object>(),
+    backEdges: [],
+  };
+  let typeBoxType: Code;
+  try {
+    typeBoxType = collect(dereferencedSchema);
+  } finally {
+    recursionState = undefined;
+  }
+
   const exportedType = createExportedTypeForName(exportedName);
 
   return `${createImportStatements()}
@@ -62,12 +88,48 @@ export const ${exportedName} = ${typeBoxType}`;
 };
 
 /**
- * Takes the root schema and recursively collects the corresponding types
- * for it. Returns the matching typebox code representing the schema.
+ * Takes a schema node and returns matching typebox code. When the node is a
+ * recursion target (detected up front in schema2typebox), it is wrapped in
+ * Type.Recursive((This) => ...) and its self-references resolve to the
+ * placeholder. With no active recursion state this is a no-op pass-through to
+ * dispatch(), so direct callers (unit tests) keep the original behaviour.
  *
  * @throws Error if an unexpected schema (one with no matching parser) was given
  */
 export const collect = (schema: JSONSchema7Definition): Code => {
+  if (
+    recursionState !== undefined &&
+    typeof schema === "object" &&
+    schema !== null
+  ) {
+    // Back-edge: this recursion target is already open on the current path.
+    // Emit its placeholder instead of recursing forever, and log it so the
+    // enclosing parseOneOf can decide between OneOf and Type.Union.
+    if (recursionState.active.has(schema)) {
+      recursionState.backEdges.push(schema);
+      return recursionState.targets.get(schema) as string;
+    }
+    // First visit of a recursion target: open Type.Recursive and collect its
+    // body. Children that point back here hit the branch above.
+    const placeholder = recursionState.targets.get(schema);
+    if (placeholder !== undefined) {
+      recursionState.active.add(schema);
+      const body = dispatch(schema);
+      recursionState.active.delete(schema);
+      return `Type.Recursive((${placeholder}) => ${body})`;
+    }
+  }
+  return dispatch(schema);
+};
+
+/**
+ * Dispatches a schema node to the matching parser. Extracted from collect() so
+ * collect() can layer recursion handling on top without re-entering the
+ * recursion check for the body of a Type.Recursive node.
+ *
+ * @throws Error if an unexpected schema (one with no matching parser) was given
+ */
+const dispatch = (schema: JSONSchema7Definition): Code => {
   // TODO: boolean schema support..?
   if (isBoolean(schema)) {
     return JSON.stringify(schema);
@@ -294,9 +356,35 @@ export const parseAllOf = (schema: AllOfSchema): Code => {
 
 export const parseOneOf = (schema: OneOfSchema): Code => {
   const schemaOptions = parseSchemaOptions(schema);
+
+  // Snapshot which recursion targets are already open (bound by an enclosing
+  // Type.Recursive) and how many back-edges have been emitted so far.
+  const enclosingActive =
+    recursionState !== undefined ? new Set(recursionState.active) : undefined;
+  const backEdgeStart =
+    recursionState !== undefined ? recursionState.backEdges.length : 0;
+
   const code = schema.oneOf.reduce<string>((acc, schema) => {
     return acc + `${acc === "" ? "" : ",\n"} ${collect(schema)}`;
   }, "");
+
+  // If a back-edge to an *enclosing* recursive node was emitted while collecting
+  // members, this oneOf contains a free 'This' ref. The custom ExtendedOneOf
+  // helper validates each subschema in isolation and cannot dereference such a
+  // ref (throws ValueCheckDereferenceError at runtime), so emit native
+  // Type.Union, which resolves recursive refs correctly. See issue #62.
+  if (recursionState !== undefined && enclosingActive !== undefined) {
+    const newBackEdges = recursionState.backEdges.slice(backEdgeStart);
+    const hasFreeBackEdge = newBackEdges.some((target) =>
+      enclosingActive.has(target)
+    );
+    if (hasFreeBackEdge) {
+      return schemaOptions === undefined
+        ? `Type.Union([${code}])`
+        : `Type.Union([${code}], ${schemaOptions})`;
+    }
+  }
+
   return schemaOptions === undefined
     ? `OneOf([${code}])`
     : `OneOf([${code}], ${schemaOptions})`;
